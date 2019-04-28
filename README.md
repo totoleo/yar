@@ -1,6 +1,6 @@
 #### Yar.go
 -----
-[Yar.go](https://github.com/totoleo/yar) 是一个[YAR，一个轻量级的跨语言RPC框架](https://github.com/laruence/yar)的客户端实现
+[Yar](https://github.com/totoleo/yar) 是一个[YAR，一个轻量级的跨语言RPC框架](https://github.com/laruence/yar)的客户端实现
 
 #### 特性
 
