@@ -4,16 +4,16 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"io"
+	"io/ioutil"
+	"net/http"
+	"net/http/httptrace"
+
 	"github.com/opentracing/opentracing-go"
 	"github.com/opentracing/opentracing-go/ext"
 	"github.com/opentracing/opentracing-go/log"
 	"github.com/totoleo/yar"
 	"github.com/totoleo/yar/packager"
-	"io"
-	"io/ioutil"
-	"net/http"
-	"net/http/httptrace"
-	"time"
 )
 
 var debug = false
@@ -21,39 +21,9 @@ var debug = false
 type Client struct {
 	hostname string
 	net      string
-	Opt      *yar.Opt
 
 	client *http.Client
-}
-
-type Option struct {
-	f func(opts *Options)
-}
-
-func WithHttpClient(client *http.Client) Option {
-	return Option{f: func(opts *Options) {
-		opts.Client = client
-	}}
-}
-
-func WithTimeout(timeout time.Duration) Option {
-	return Option{f: func(opts *Options) {
-		opts.Timeout = timeout
-	}}
-}
-func WithPackager(pack packager.Packager) Option {
-	return Option{f: func(opts *Options) {
-		opts.Packer = pack
-	}}
-}
-
-type Options struct {
-	Timeout        time.Duration
-	ConnectTimeout uint32
-	Packager       string
-	LogLevel       int
-	Client         *http.Client
-	Packer         packager.Packager
+	packer packager.Packager
 }
 
 // 获取一个YAR 客户端
@@ -76,7 +46,6 @@ func NewClient(addr string, options ...Option) (*Client, *yar.Error) {
 
 	client.hostname = addr
 	client.net = netName
-	client.Opt = yar.NewOpt()
 
 	if opts.Client == nil {
 
@@ -84,27 +53,18 @@ func NewClient(addr string, options ...Option) (*Client, *yar.Error) {
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 		}
 		tr.DisableKeepAlives = true
-		//if Client.Opt.DNSCache == true {
-		//	tr.DialContext = func(ctx context.Context, network string, address string) (net.Conn, error) {
-		//		separator := strings.LastIndex(address, ":")
-		//		ips, err := globalResolver.Lookup(address[:separator])
-		//		if err != nil {
-		//			return nil, errors.New("Lookup Error:" + err.Error())
-		//		}
-		//		if len(ips) < 1 {
-		//			return nil, errors.New("lookup Error: No IP Resolver Result Found")
-		//		}
-		//		var dial net.Dialer
-		//		return dial.DialContext(ctx, "tcp", ips[0].String()+address[separator:])
-		//	}
-		//}
 		httpClient := &http.Client{
 			Transport: tr,
-			Timeout:   1000 * time.Millisecond,
 		}
 		client.client = httpClient
 	}
-	{
+	if opts.Timeout > 0 {
+		client.client.Timeout = opts.Timeout
+	}
+	if opts.Packer != nil {
+		client.packer = opts.Packer
+	} else {
+		client.packer = &packager.JSON
 	}
 	return client, nil
 }
@@ -142,10 +102,8 @@ func (client *Client) initRequest(method string, params ...interface{}) (*yar.Re
 
 func (client *Client) packRequest(r *yar.Request) ([]byte, *yar.Error) {
 
-	packagerName := client.Opt.Packager
-
-	r.Protocol.Packager = packagerName
-	pack, err := packager.Pack(packagerName[:], r)
+	r.Protocol.Packager = client.packer.GetName()
+	pack, err := client.packer.Marshal(r)
 
 	if err != nil {
 		return nil, yar.NewError(yar.ErrorPackager, err.Error())
@@ -157,7 +115,6 @@ func (client *Client) packRequest(r *yar.Request) ([]byte, *yar.Error) {
 func (client *Client) readResponse(reader io.Reader, ret interface{}) *yar.Error {
 
 	allBody, err := ioutil.ReadAll(reader)
-
 	if err != nil {
 		return yar.NewError(yar.ErrorResponse, "Read Response Error:"+err.Error())
 	}
@@ -172,7 +129,7 @@ func (client *Client) readResponse(reader io.Reader, ret interface{}) *yar.Error
 
 	payload := bytes.NewBuffer(protocolBuffer)
 
-	protocol.Read(payload)
+	_ = protocol.Read(payload)
 
 	bodyLength := protocol.BodyLength - yar.PackagerLength
 
@@ -183,7 +140,7 @@ func (client *Client) readResponse(reader io.Reader, ret interface{}) *yar.Error
 	bodyBuffer := allBody[yar.ProtocolLength+yar.PackagerLength:]
 
 	response := new(yar.Response)
-	err = packager.Unpack(client.Opt.Packager[:], bodyBuffer, response)
+	err = client.packer.Unmarshal(bodyBuffer, response)
 
 	if err != nil {
 		return yar.NewError(yar.ErrorPackager, "Unpack Error:"+err.Error())
@@ -195,7 +152,7 @@ func (client *Client) readResponse(reader io.Reader, ret interface{}) *yar.Error
 
 	if ret != nil {
 
-		err = packager.Unpack(client.Opt.Packager[:], response.Response, ret)
+		err = client.packer.Unmarshal(response.Response, ret)
 
 		if err != nil {
 			return yar.NewError(yar.ErrorPackager, "pack response ret val error:"+err.Error()+" "+string(allBody))
@@ -206,6 +163,9 @@ func (client *Client) readResponse(reader io.Reader, ret interface{}) *yar.Error
 }
 
 func (client *Client) httpHandler(ctx context.Context, method string, ret interface{}, params ...interface{}) *yar.Error {
+
+	clientSpan, ctx := opentracing.StartSpanFromContext(ctx, method)
+	defer clientSpan.Finish()
 
 	r, err := client.initRequest(method, params...)
 
@@ -222,13 +182,14 @@ func (client *Client) httpHandler(ctx context.Context, method string, ret interf
 	r.Protocol.BodyLength = uint32(len(packBody) + yar.PackagerLength)
 
 	postBuffer := bytes.NewBuffer(nil)
-	r.Protocol.Write(postBuffer)
+
+	if err := r.Protocol.Write(postBuffer); err != nil {
+		return yar.NewError(yar.ErrorNetwork, err.Error())
+	}
+
 	postBuffer.Write(packBody)
 
-	//todo 停止验证HTTPS请求
 	httpClient := client.getClient()
-
-	clientSpan, ctx := opentracing.StartSpanFromContext(ctx, method)
 
 	//uncomment to enable
 	if debug {
@@ -237,6 +198,10 @@ func (client *Client) httpHandler(ctx context.Context, method string, ret interf
 	}
 
 	req, postErr := http.NewRequest("POST", client.hostname, postBuffer)
+	if postErr != nil {
+		return yar.NewError(yar.ErrorRequest, postErr.Error())
+	}
+
 	req.Header.Set("Content-Type", "application/json")
 	req = req.WithContext(ctx)
 
@@ -244,10 +209,9 @@ func (client *Client) httpHandler(ctx context.Context, method string, ret interf
 	ext.SpanKindRPCClient.Set(clientSpan)
 
 	// Inject the Client span context into the headers
-	clientSpan.Tracer().Inject(clientSpan.Context(), opentracing.HTTPHeaders, opentracing.HTTPHeadersCarrier(req.Header))
+	_ = clientSpan.Tracer().Inject(clientSpan.Context(), opentracing.HTTPHeaders, opentracing.HTTPHeadersCarrier(req.Header))
 
 	resp, postErr := httpClient.Do(req)
-	clientSpan.Finish()
 
 	if postErr != nil {
 		return yar.NewError(yar.ErrorNetwork, postErr.Error())

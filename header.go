@@ -50,9 +50,8 @@ func NewHeader() *Header {
 }
 
 func NewHeaderWithBytes(payload *bytes.Buffer) *Header {
-
 	p := NewHeader()
-	p.Read(payload)
+	_ = p.Read(payload)
 	return p
 }
 
