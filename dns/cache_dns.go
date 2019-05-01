@@ -1,4 +1,4 @@
-package client
+package dns
 
 import (
 	"net"
@@ -8,34 +8,34 @@ import (
 
 type ResolverResult struct {
 	list    []net.IP
-	Expired int
+	Expired time.Time
 }
 
-type Resolver struct {
+type CacheResolver struct {
 	cache  map[string]ResolverResult
 	lock   sync.RWMutex
 	Expire time.Duration
 	Max    int
 }
 
-func NewResolver(max int, expires time.Duration) *Resolver {
-	r := new(Resolver)
+func NewResolver(max int, expires time.Duration) *CacheResolver {
+	r := new(CacheResolver)
 	r.Max = max
 	r.Expire = expires
-	r.cache = make(map[string]ResolverResult)
+	r.cache = make(map[string]ResolverResult, max/2+1)
 	return r
 }
 
-func (r *Resolver) Lookup(domain string) ([]net.IP, error) {
-	now := time.Now().Unix()
+func (r *CacheResolver) Lookup(domain string) ([]net.IP, error) {
+	now := time.Now()
 	r.lock.RLock()
 	ret, ok := r.cache[domain]
 	r.lock.RUnlock()
 	if ok {
-		if ret.Expired == 0 {
+		if ret.Expired.IsZero() {
 			return ret.list, nil
 		}
-		if ret.Expired > int(now) {
+		if ret.Expired.Before(now) {
 			return ret.list, nil
 		}
 	}
@@ -47,17 +47,18 @@ func (r *Resolver) Lookup(domain string) ([]net.IP, error) {
 		list: ips,
 	}
 	if r.Expire > 0 {
-		ret.Expired = int(now) + int(r.Expire.Seconds())
+		ret.Expired = now
 	}
 
 	r.lock.Lock()
 	r.cache[domain] = ret
 	if r.Max > 0 && r.Max < len(r.cache) {
 		i := 0
-		newCache := make(map[string]ResolverResult)
+		newCache := make(map[string]ResolverResult, r.Max)
 		for k, item := range r.cache {
 			newCache[k] = item
-			if i > r.Max {
+			i++
+			if i > r.Max/2 {
 				break
 			}
 		}
@@ -65,10 +66,4 @@ func (r *Resolver) Lookup(domain string) ([]net.IP, error) {
 	}
 	r.lock.Unlock()
 	return ips, err
-}
-
-var globalResolver *Resolver = nil
-
-func init() {
-	globalResolver = NewResolver(1000, 60*time.Second)
 }

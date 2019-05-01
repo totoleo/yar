@@ -1,13 +1,13 @@
 package yar
 
 import (
-	"bytes"
 	"encoding/binary"
 	"io"
+	"sync"
 )
 
 const (
-	ProtocolLength = 82
+	ProtocolLength = 90
 	PackagerLength = 8
 )
 
@@ -16,6 +16,8 @@ type ErrorType int
 const (
 	MagicNumber = 0x80DFEC60
 )
+
+var YarProvider = [28]byte{'Y', 'a', 'r', '/', 'G', 'o', ' ', 'v', '1', '.', '0', '.', '0'}
 
 const (
 	ERR_OKEY           ErrorType = 0x0
@@ -30,57 +32,40 @@ const (
 )
 
 type Header struct {
-	Id          uint32
-	Version     uint16
-	MagicNumber uint32
-	Reserved    uint32
-	Provider    [28]byte
-	Encrypt     uint32
-	Token       [32]byte
-	BodyLength  uint32
-	Packager    [8]byte
+	Id          uint32   //4
+	Version     uint16   //2
+	MagicNumber uint32   //4
+	Reserved    uint32   //4
+	Provider    [28]byte //28
+	Encrypt     uint32   //4
+	Token       [32]byte //32
+	BodyLength  uint32   //4
+	Packager    [8]byte  //8
 }
 
-func NewHeader() *Header {
+var headerPool = sync.Pool{
+	New: func() interface{} {
+		return NewHeader()
+	},
+}
 
+func GetHeader() *Header {
+	return headerPool.Get().(*Header)
+}
+func NewHeader() *Header {
 	proto := new(Header)
 	proto.MagicNumber = MagicNumber
+	proto.Provider = YarProvider
 	return proto
-
+}
+func Return(h *Header) {
+	headerPool.Put(h)
 }
 
-func NewHeaderWithBytes(payload *bytes.Buffer) *Header {
-
-	p := NewHeader()
-	p.Read(payload)
-	return p
-}
-
-func (h *Header) Read(payload *bytes.Buffer) error {
-
-	//binary.Read(payload, binary.BigEndian, &h.Id)
-	//binary.Read(payload, binary.BigEndian, &h.Version)
-	//binary.Read(payload, binary.BigEndian, &h.MagicNumber)
-	//binary.Read(payload, binary.BigEndian, &h.Reserved)
-	//binary.Read(payload, binary.BigEndian, &h.Provider)
-	//binary.Read(payload, binary.BigEndian, &h.Encrypt)
-	//binary.Read(payload, binary.BigEndian, &h.Token)
-	//binary.Read(payload, binary.BigEndian, &h.BodyLength)
-	//binary.Read(payload, binary.BigEndian, &h.Packager)
+func (h *Header) ReadFrom(payload io.Reader) error {
 	return binary.Read(payload, binary.BigEndian, h)
 }
 
-func (h *Header) Bytes() *bytes.Buffer {
-
-	buffer := new(bytes.Buffer)
-	err := binary.Write(buffer, binary.BigEndian, h)
-
-	if err != nil {
-		return nil
-	}
-	return buffer
-}
-
-func (h *Header) Write(w io.Writer) error {
+func (h *Header) WriteTo(w io.Writer) error {
 	return binary.Write(w, binary.BigEndian, h)
 }

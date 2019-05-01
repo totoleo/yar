@@ -16,10 +16,6 @@ type Exception struct {
 	e exception
 }
 
-func NewException(message string) *Exception {
-	return &Exception{e: exception{Message: message}}
-}
-
 func (e *Exception) GetMessage() string {
 	return e.e.Message
 }
@@ -55,23 +51,14 @@ func (m *RawMessage) UnmarshalMsgpack(data []byte) error {
 }
 
 type Response struct {
-	Protocol *Header         `json:"_" msgpack:"_"`
-	Id       uint32          `json:"i" msgpack:"i"`
-	Error    *Exception      `json:"e" msgpack:"e"`
-	Out      json.RawMessage `json:"o" msgpack:"o"`
-	Response json.RawMessage `json:"r" msgpack:"r"`
-	Status   ErrorType       `json:"s" msgpack:"s"`
+	Id       uint32     `json:"i" msgpack:"i"`
+	Error    *Exception `json:"e" msgpack:"e"`
+	Out      RawMessage `json:"o" msgpack:"o"`
+	Response RawMessage `json:"r" msgpack:"r"`
+	Status   ErrorType  `json:"s" msgpack:"s"`
 }
 
 func NewResponse() (response *Response) {
-
 	response = new(Response)
-
 	return response
-}
-
-func (r *Response) Exception(msg string) {
-
-	r.Status = ERR_OUTPUT
-	r.Error = NewException(msg)
 }

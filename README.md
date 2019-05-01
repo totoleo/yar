@@ -1,4 +1,5 @@
-#### Yar.go
+#### Yar: Yet Another yaR client to go
+
 -----
 [Yar](https://github.com/totoleo/yar) 是一个[YAR，一个轻量级的跨语言RPC框架](https://github.com/laruence/yar)的客户端实现
 
@@ -47,6 +48,10 @@ func main() {
 }
 
 ```
+
+感谢：
+[weixinhost/yar.go](https://github.com/weixinhost/yar.go)
+[gyf19/yar-go](https://github.com/gyf19/yar-go)
 
 
 

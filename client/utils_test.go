@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"testing"
 	"time"
+
+	"github.com/totoleo/yar/dns"
 )
 
 func TestParseAddrNet(t *testing.T) {
@@ -30,7 +32,7 @@ func TestParseAddrNet(t *testing.T) {
 
 func TestDNS(t *testing.T) {
 
-	resolver := NewResolver(10, 10*time.Second)
+	resolver := dns.NewResolver(10, 10*time.Second)
 
 	var list []string = []string{
 		"www.sina.com.cn",
